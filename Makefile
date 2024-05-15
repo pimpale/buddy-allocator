@@ -12,8 +12,8 @@ INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
 LDFLAGS := 
 
-CC := clang
-CPPFLAGS ?= $(INC_FLAGS) -std=c11 -MMD -MP -O0 -g3 -Wall -Weverything -pedantic 
+CC := clang-19
+CPPFLAGS ?= $(INC_FLAGS) -std=c23 -MMD -MP -O0 -g3 -Wall -Weverything -pedantic -Wno-unsafe-buffer-usage -Wno-declaration-after-statement -Wno-pre-c23-compat -Wno-padded
 
 $(BUILD_DIR)/$(TARGET_EXEC): $(OBJS)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS)
