@@ -156,9 +156,38 @@ static uint64_t acquire_empty_slot(struct buddy_allocator_s *ba,
   }
 }
 
+// given an index into the heap, returns the index of the first page
+static uint64_t get_first_page_index(struct buddy_allocator_s *ba, uint64_t i) {
+  return i << (uint64_t)(ba->max_level - heap_level(i));
+}
+
+// TODO: need to fix this
+static uint64_t get_index_from_page(struct buddy_allocator_s *ba, uint64_t i) {
+  uint64_t block_index = 0;
+  for (uint8_t level = 0; level <= ba->max_level; level++) {
+    // check if this current block is the one
+    if (ba->heap[block_index].smallest_free_level == BA_ALLOCATED) {
+      return block_index;
+    } else if (ba->heap[block_index].smallest_free_level == level) {
+        // we hit a completely free block
+        return 0xFFFF'FFFF'FFFF'FFFF;
+    }
+
+    // find whether the index would be in the left or right half.
+    uint64_t is_right = i >> (ba->max_level - 1);
+
+    if (is_right) {
+      block_index = heap_right(i);
+    } else {
+      block_index = heap_left(i);
+    }
+  }
+  return block_index;
+}
+
 static uint8_t get_max_level_from_n_pages(uint64_t n_pages) {
-  if(n_pages == 0) {
-      return 1;
+  if (n_pages == 0) {
+    return 1;
   }
   return uint64_log2(n_pages) + !uint64_is_power_of_2(n_pages);
 }
@@ -181,24 +210,96 @@ struct buddy_allocator_s buddy_init(uint64_t n_pages, void *memory_location) {
   return allocator;
 }
 
-void buddy_verify(struct buddy_allocator_s *ba) {}
+static void buddy_verify_recursive(struct buddy_allocator_s *ba, uint64_t i) {
+  uint8_t level = heap_level(i);
+  if (level == ba->max_level) {
+    // the only valid values at this level are ba->max_level, BA_UNUSABLE, or
+    // BA_ALLOCATED
+    if (ba->heap[i].smallest_free_level == BA_UNUSABLE) {
+      // unusable
+    } else if (ba->heap[i].smallest_free_level == BA_ALLOCATED) {
+      // allocated
+    } else if (ba->heap[i].smallest_free_level == ba->max_level) {
+      // free
+    } else {
+      FATAL("invalid smallest_free_level on bottom level block");
+    }
+  } else {
+    const uint64_t left = heap_left(i);
+    const uint64_t right = heap_right(i);
+    if (ba->heap[i].smallest_free_level == BA_UNUSABLE) {
+      // unsable
+    } else if (ba->heap[i].smallest_free_level == BA_ALLOCATED) {
+      // allocated
+    } else if (ba->heap[i].smallest_free_level == BA_FILLED) {
+      // filled
 
-uint64_t buddy_allocate(struct buddy_allocator_s *allocator,
+      // check children (they must be both be invalid)
+      if (ba->heap[left].smallest_free_level > BA_MAX_VALID_LEVEL &&
+          ba->heap[left].smallest_free_level > BA_MAX_VALID_LEVEL) {
+        // ok
+      } else {
+        FATAL(
+            "block claims to be filled, but at least one child has free space");
+      }
+
+      // verify children
+      buddy_verify_recursive(ba, left);
+      buddy_verify_recursive(ba, right);
+    } else if (ba->heap[i].smallest_free_level < level) {
+      // wrong!
+      FATAL("block has a smaller level than should be possible at it's level");
+    } else if (ba->heap[i].smallest_free_level == level) {
+      // fully free block
+    } else if (ba->heap[i].smallest_free_level > level &&
+               ba->heap[i].smallest_free_level <= ba->max_level) {
+      // split, at least one descendant is busy
+      if (ba->heap[i].smallest_free_level ==
+          uint8_min(ba->heap[left].smallest_free_level,
+                    ba->heap[right].smallest_free_level)) {
+        // ok
+      } else {
+        FATAL("block does not satisfy invariant that its smallest free "
+              "level is the min of its children");
+      }
+
+      // if both of it's children are split and free, then that's an error
+      if (ba->heap[left].smallest_free_level == level + 1 &&
+          ba->heap[right].smallest_free_level == level + 1) {
+        FATAL("two children should be merged");
+      }
+
+      // verify children
+      buddy_verify_recursive(ba, left);
+      buddy_verify_recursive(ba, right);
+    } else {
+      FATAL("block has a greater level than is permissible in this tree");
+    }
+  }
+}
+
+void buddy_verify(struct buddy_allocator_s *ba) {
+  buddy_verify_recursive(ba, 0);
+}
+
+uint64_t buddy_allocate(struct buddy_allocator_s *ba,
                         unsigned _BitInt(24) allocator_id,
                         const uint8_t order) {
-  if (order >= allocator->max_level) {
+  if (order >= ba->max_level) {
     printf("order is too large");
     return 0xFFFF'FFFF'FFFF'FFFF;
   }
 
-  const uint8_t level = allocator->max_level - order;
-  uint64_t index = acquire_empty_slot(allocator, level);
-  mark_allocated(allocator, index);
+  const uint8_t level = ba->max_level - order;
+  uint64_t index = acquire_empty_slot(ba, level);
+  mark_allocated(ba, index);
 
-  allocator->heap[index].allocator_id = allocator_id;
+  ba->heap[index].allocator_id = allocator_id;
+
+  return get_first_page_index(ba, index);
 }
 
-void buddy_free(struct buddy_allocator_s *allocator,
-                unsigned _BitInt(24) * ptr) {
-  // get index to free
+void buddy_free(struct buddy_allocator_s *ba, unsigned _BitInt(24) allocator_id,
+                uint64_t page_id) {
+  // get the index of the allocation
 }

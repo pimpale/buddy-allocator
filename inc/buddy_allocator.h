@@ -40,12 +40,13 @@ struct buddy_allocator_s {
 uint64_t buddy_get_heap_bytes(uint64_t n_pages);
 struct buddy_allocator_s buddy_init(uint64_t n_pages, void *memory_location);
 
+// validate all the invariants of the buddy allocator heap. used for debugging
 void buddy_verify(struct buddy_allocator_s *ba);
 
 // return page_id of the start of the allocation
 uint64_t buddy_allocate(struct buddy_allocator_s *ba, unsigned _BitInt(24) allocator_id, uint8_t order);
 
 // accepts the page_id of the start of the allocation
-void buddy_free(struct buddy_allocator_s *ba, uint64_t page_id);
+void buddy_free(struct buddy_allocator_s *ba,unsigned _BitInt(24) allocator_id, uint64_t page_id);
 
 #endif // BUDDY_ALLOCATOR_H
