@@ -1,4 +1,4 @@
-TARGET_EXEC ?= cvec-example
+TARGET_EXEC ?= ba-example
 
 BUILD_DIR ?= ./obj
 SRC_DIRS ?= ./src ./example

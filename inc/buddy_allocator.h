@@ -6,7 +6,7 @@
 #define BA_FILLED 255
 #define BA_ALLOCATED 254
 #define BA_UNUSABLE 253
-#define BA_MAX_VALID_LEVEL 250
+#define BA_MAX_VALID_LEVEL 252
 
 // DEFINITIONS:
 // level: the root of a heap has level 0, it's children have level 1, etc
@@ -16,13 +16,13 @@
 // We can get level from order by doing n_levels - order
 
 struct [[gnu::packed]] buddy_block_s {
-  // if this block is ALLOCATED then the next 24 bits are the allocator's id
-  unsigned _BitInt(24) allocator_id;
   // the smallest level of any of the children of this block which are empty
   // if BA_ALLOCATED, allocator_id is valid
   // if BA_UNUSABLE, this block should never be used or assigned
   // if BA_FILLED, all the
-  unsigned _BitInt(8) smallest_free_level;
+  uint8_t smallest_free_level;
+  // if BA_ALLOCATED this contains the allocator id
+  uint8_t allocator_id[3];
 };
 
 struct buddy_allocator_s {
