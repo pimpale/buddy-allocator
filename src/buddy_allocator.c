@@ -1,16 +1,21 @@
 #include "buddy_allocator.h"
 
-// TODO: implement
+// TODO: implement https://arxiv.org/pdf/1804.03436
 
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 #define FATAL(x)                                                               \
   do {                                                                         \
     fprintf(stderr, x);                                                        \
+    exit(EXIT_FAILURE);                                                        \
+  } while (0)
+
+#define FATAL_ARGS(fmt, ...)                                                   \
+  do {                                                                         \
+    fprintf(stderr, fmt, __VA_ARGS__);                                         \
     exit(EXIT_FAILURE);                                                        \
   } while (0)
 
@@ -25,15 +30,7 @@ static inline uint8_t uint64_log2(uint64_t v) {
 static inline uint64_t uint64_pow2(uint8_t i) { return (uint64_t)1 << i; }
 
 static inline bool uint64_is_power_of_2(uint64_t x) {
-  return (x != 0) && ((x & (x - 1)) == 0);
-}
-
-static inline uint8_t uint8_max(uint8_t a, uint8_t b) {
-  if (a > b) {
-    return a;
-  } else {
-    return b;
-  }
+  return __builtin_popcountll(x) == 1;
 }
 
 static inline uint8_t uint8_min(uint8_t a, uint8_t b) {
@@ -48,60 +45,62 @@ static inline uint8_t uint8_min(uint8_t a, uint8_t b) {
 /// HEAP FUNCTIONS
 ////////////////////////////////
 
+// the level of a given index
 static inline uint8_t heap_level(uint64_t i) { return uint64_log2(i + 1); }
 
+// the size of the entire heap
 static inline uint64_t heap_size(uint8_t max_level) {
   return uint64_pow2(max_level + 1) - 1;
 }
 
+// the parent index of the given index
 static inline uint64_t heap_parent(uint64_t i) { return (i - 1) / 2; }
 
+// the left child of the given index
 static inline uint64_t heap_left(uint64_t i) { return 2 * i + 1; }
 
+// the right child of the given index
 static inline uint64_t heap_right(uint64_t i) { return 2 * i + 2; }
 
+// the sibling of the given index
 static inline uint64_t heap_sibling(uint64_t i) {
-  uint64_t parent = heap_parent(i);
-  uint64_t parent_left = heap_left(parent);
-  uint64_t parent_right = heap_right(parent);
-  if (i == parent_left) {
-    return parent_right;
+  if (i % 2 == 1) {
+    // if index is odd, then we are a left child
+    // add 1 to get the right child
+    return i + 1;
   } else {
-    return parent_left;
+    // if index is even, then we are a right child
+    // subtract 1 to get the left child
+    return i - 1;
   }
 }
 
-// given two children smallest_free_level , returns what the parent's
-// smallest_free_level should be
+// given two children , returns what the parent's
+// should be
 static uint8_t parent_free_level(const struct buddy_allocator_s *ba,
                                  uint8_t a_level, uint8_t b_level) {
   // the new smallest free level is the minimum of these two blocks
-  uint8_t parent_smallest_free_level = uint8_min(a_level, b_level);
+  uint8_t parent = uint8_min(a_level, b_level);
 
-  if (parent_smallest_free_level > ba->max_level) {
+  if (parent > ba->max_level) {
     return BA_FILLED;
   } else {
-    return parent_smallest_free_level;
+    return parent;
   }
 }
 
-static void propagate_smallest_free_level(struct buddy_allocator_s *ba,
-                                          uint64_t block_index) {
-  // then update the smallest_free_level on parent blocks
+static void propagate(struct buddy_allocator_s *ba, uint64_t block_index) {
+  // then update the on parent blocks
   while (block_index != 0) {
     uint64_t parent = heap_parent(block_index);
-    uint8_t sibling_level =
-        ba->heap[heap_sibling(block_index)].smallest_free_level;
-    uint8_t this_level = ba->heap[block_index].smallest_free_level;
-    uint8_t parent_level = ba->heap[parent].smallest_free_level;
+    uint8_t updated_parent_level = parent_free_level(
+        ba, ba->heap[block_index], ba->heap[heap_sibling(block_index)]);
 
-    if (parent_level == sibling_level) {
+    if (ba->heap[parent] == updated_parent_level) {
       break;
     } else {
       // set the parent's level
-      ba->heap[parent].smallest_free_level =
-          parent_free_level(ba, this_level, sibling_level);
-
+      ba->heap[parent] = updated_parent_level;
       // start processing the upper one
       block_index = parent;
     }
@@ -110,31 +109,29 @@ static void propagate_smallest_free_level(struct buddy_allocator_s *ba,
 
 // marks this block and any parent blocks as busy
 static void mark_allocated(struct buddy_allocator_s *ba, uint64_t block_index) {
-  ba->heap[block_index].smallest_free_level = BA_ALLOCATED;
+  ba->heap[block_index] = BA_ALLOCATED;
   // update parent blocks
-  propagate_smallest_free_level(ba, block_index);
+  propagate(ba, block_index);
 }
 
 // marks this block as free and coalesce blocks
 static void mark_free(struct buddy_allocator_s *ba, uint64_t block_index) {
-  ba->heap[block_index].smallest_free_level = heap_level(block_index);
+  ba->heap[block_index] = heap_level(block_index);
 
   // try to merge blocks as much as we can
   while (block_index != 0) {
-    uint8_t sibling_level =
-        ba->heap[heap_sibling(block_index)].smallest_free_level;
+    uint8_t sibling_level = ba->heap[heap_sibling(block_index)];
 
     if (sibling_level == heap_level(block_index)) {
       uint64_t parent = heap_parent(block_index);
-      ba->heap[parent].smallest_free_level = heap_level(parent);
+      ba->heap[parent] = heap_level(parent);
       block_index = parent;
     } else {
       break;
     }
   }
-
-  // then update the smallest_free_level on parent blocks
-  propagate_smallest_free_level(ba, block_index);
+  // then update the on parent blocks
+  propagate(ba, block_index);
 }
 
 // splits blocks to find an empty slot.
@@ -148,28 +145,28 @@ static uint64_t acquire_empty_slot(struct buddy_allocator_s *ba,
   uint64_t index = 0;
   uint8_t level = 0;
   while (true) {
-    if (allocation_level < ba->heap[index].smallest_free_level) {
+    if (allocation_level < ba->heap[index]) {
       FATAL("must ensure that space exists before calling this function");
     }
 
     // this entire block is free
-    if (ba->heap[index].smallest_free_level == level) {
-      if (ba->heap[index].smallest_free_level == allocation_level) {
+    if (ba->heap[index] == level) {
+      if (ba->heap[index] == allocation_level) {
         // we found a free block that has the allocation level we desire and is
         // wholly unallocated!
         return index;
       } else {
         // split block (the smallest level is now one of the children)
-        ba->heap[index].smallest_free_level = level + 1;
-        ba->heap[heap_left(index)].smallest_free_level = level + 1;
-        ba->heap[heap_right(index)].smallest_free_level = level + 1;
+        ba->heap[index] = level + 1;
+        ba->heap[heap_left(index)] = level + 1;
+        ba->heap[heap_right(index)] = level + 1;
       }
     }
 
     const uint64_t left_index = heap_left(index);
     const uint64_t right_index = heap_right(index);
-    const uint8_t left_level = ba->heap[left_index].smallest_free_level;
-    const uint8_t right_level = ba->heap[right_index].smallest_free_level;
+    const uint8_t left_level = ba->heap[left_index];
+    const uint8_t right_level = ba->heap[right_index];
 
     // pick the one with the larger level (smaller free block) so that we
     // preserve larger blocks for potential larger allocations
@@ -206,12 +203,12 @@ static uint64_t get_block_index_from_page_index(struct buddy_allocator_s *ba,
   uint64_t block_index = 0;
   for (uint8_t level = 0; level <= ba->max_level; level++) {
     // check if this current block is the one
-    if (ba->heap[block_index].smallest_free_level == BA_ALLOCATED) {
+    if (ba->heap[block_index] == BA_ALLOCATED) {
       return block_index;
-    } else if (ba->heap[block_index].smallest_free_level == level) {
+    } else if (ba->heap[block_index] == level) {
       // we hit a completely free block
       return UINT64_MAX;
-    } else if (ba->heap[block_index].smallest_free_level == BA_UNUSABLE) {
+    } else if (ba->heap[block_index] == BA_UNUSABLE) {
       // we hit an unusable block
       return UINT64_MAX;
     }
@@ -235,7 +232,7 @@ static uint8_t get_max_level_from_n_pages(uint64_t n_pages) {
 
 uint64_t buddy_get_heap_bytes(uint64_t n_pages) {
   uint8_t max_level = get_max_level_from_n_pages(n_pages);
-  return heap_size(max_level) * sizeof(struct buddy_block_s);
+  return heap_size(max_level);
 }
 
 struct buddy_allocator_s buddy_init(uint64_t n_pages, void *memory_location) {
@@ -245,7 +242,7 @@ struct buddy_allocator_s buddy_init(uint64_t n_pages, void *memory_location) {
                                         .heap = memory_location};
 
   // init the heap
-  allocator.heap[0].smallest_free_level = 0;
+  allocator.heap[0] = 0;
 
   return allocator;
 }
@@ -255,65 +252,68 @@ static void buddy_verify_recursive(struct buddy_allocator_s *ba, uint64_t i) {
   if (level == ba->max_level) {
     // the only valid values at this level are ba->max_level, BA_UNUSABLE, or
     // BA_ALLOCATED
-    if (ba->heap[i].smallest_free_level == BA_UNUSABLE) {
+    if (ba->heap[i] == BA_UNUSABLE) {
       // unusable
-    } else if (ba->heap[i].smallest_free_level == BA_ALLOCATED) {
+    } else if (ba->heap[i] == BA_ALLOCATED) {
       // allocated
-    } else if (ba->heap[i].smallest_free_level == ba->max_level) {
+    } else if (ba->heap[i] == ba->max_level) {
       // free
     } else {
-      FATAL("invalid smallest_free_level on bottom level block");
+      FATAL("invalid on bottom level block");
     }
   } else {
     const uint64_t left = heap_left(i);
     const uint64_t right = heap_right(i);
-    if (ba->heap[i].smallest_free_level == BA_UNUSABLE) {
+    if (ba->heap[i] == BA_UNUSABLE) {
       // unsable
-    } else if (ba->heap[i].smallest_free_level == BA_ALLOCATED) {
+    } else if (ba->heap[i] == BA_ALLOCATED) {
       // allocated
-    } else if (ba->heap[i].smallest_free_level == BA_FILLED) {
+    } else if (ba->heap[i] == BA_FILLED) {
       // filled
 
       // check children (they must be both be invalid)
-      if (ba->heap[left].smallest_free_level > BA_MAX_VALID_LEVEL &&
-          ba->heap[right].smallest_free_level > BA_MAX_VALID_LEVEL) {
+      if (ba->heap[left] > BA_MAX_VALID_LEVEL &&
+          ba->heap[right] > BA_MAX_VALID_LEVEL) {
         // ok
       } else {
-        FATAL(
-            "block claims to be filled, but at least one child has free space");
+        FATAL_ARGS("block %zu claims to be filled, but at least one child has "
+                   "free space\n",
+                   i);
       }
 
       // verify children
       buddy_verify_recursive(ba, left);
       buddy_verify_recursive(ba, right);
-    } else if (ba->heap[i].smallest_free_level < level) {
+    } else if (ba->heap[i] < level) {
       // wrong!
-      FATAL("block has a smaller level than should be possible at it's level");
-    } else if (ba->heap[i].smallest_free_level == level) {
+      FATAL_ARGS("block %zu has a smaller level than should be possible at "
+                 "it's level\n",
+                 i);
+    } else if (ba->heap[i] == level) {
       // fully free block
-    } else if (ba->heap[i].smallest_free_level > level &&
-               ba->heap[i].smallest_free_level <= ba->max_level) {
+    } else if (ba->heap[i] > level && ba->heap[i] <= ba->max_level) {
       // split, at least one descendant is busy
-      if (ba->heap[i].smallest_free_level ==
-          uint8_min(ba->heap[left].smallest_free_level,
-                    ba->heap[right].smallest_free_level)) {
+      if (ba->heap[i] == uint8_min(ba->heap[left], ba->heap[right])) {
         // ok
       } else {
-        FATAL("block does not satisfy invariant that its smallest free "
-              "level is the min of its children");
+        FATAL_ARGS(
+            "block %zu does not satisfy invariant that its smallest free "
+            "level is the min of its children\n",
+            i);
       }
 
       // if both of it's children are split and free, then that's an error
-      if (ba->heap[left].smallest_free_level == level + 1 &&
-          ba->heap[right].smallest_free_level == level + 1) {
-        FATAL("two children should be merged");
+      if (ba->heap[left] == level + 1 && ba->heap[right] == level + 1) {
+        FATAL_ARGS("block %zu: two children should be merged\n", i);
       }
 
       // verify children
       buddy_verify_recursive(ba, left);
       buddy_verify_recursive(ba, right);
     } else {
-      FATAL("block has a greater level than is permissible in this tree");
+      FATAL_ARGS(
+          "block %zu: has a greater level than is permissible in this tree\n",
+          i);
     }
   }
 }
@@ -322,44 +322,34 @@ void buddy_verify(struct buddy_allocator_s *ba) {
   buddy_verify_recursive(ba, 0);
 }
 
-uint64_t buddy_allocate(struct buddy_allocator_s *ba,
-                        unsigned _BitInt(24) allocator_id,
-                        const uint8_t order) {
-  if (order > ba->max_level) {
-    printf("%zu: order (%zu)is too large\n", (uint64_t)allocator_id,
-           (uint64_t)order);
+uint64_t buddy_allocate(struct buddy_allocator_s *ba, const uint64_t n_pages) {
+  if (n_pages == 0 || n_pages > uint64_pow2(ba->max_level)) {
+    // can't support request
+    printf("can't support request\n");
     return UINT64_MAX;
   }
 
-  const uint8_t level = ba->max_level - order;
+  const uint8_t level = ba->max_level - uint64_log2(n_pages);
 
-  if (level < ba->heap[0].smallest_free_level) {
-    printf("%zu: order (%zu) doesn't have enough room\n",
-           (uint64_t)allocator_id, (uint64_t)order);
+  if (level < ba->heap[0]) {
+    // out of memory
+    printf("out of memory\n");
     return UINT64_MAX;
   }
 
-  uint64_t index = acquire_empty_slot(ba, level);
+  // split blocks to get a slot of the correct size
+  const uint64_t index = acquire_empty_slot(ba, level);
+
+  // mark this block as allocated and update parent blocks
   mark_allocated(ba, index);
-
-  memcpy(&ba->heap[index].allocator_id, &allocator_id, 3);
 
   return get_first_page_index_from_block_index(ba, index);
 }
 
-void buddy_free(struct buddy_allocator_s *ba, unsigned _BitInt(24) allocator_id,
-                uint64_t page_id) {
+void buddy_free(struct buddy_allocator_s *ba, uint64_t page_id) {
   uint64_t block_index = get_block_index_from_page_index(ba, page_id);
   if (block_index == UINT64_MAX) {
     printf("this is not a valid allocation\n");
-    return;
-  }
-
-  unsigned _BitInt(24) stored_allocator_id;
-  memcpy(&stored_allocator_id, &ba->heap[block_index].allocator_id, 3);
-
-  if (stored_allocator_id != allocator_id) {
-    printf("this block was not allocated by this id\n");
     return;
   }
 
