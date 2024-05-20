@@ -6,7 +6,7 @@
 
 // test if 1 page works
 static void test1() {
-    printf("TEST 1\n");
+  printf("TEST 1\n");
   uint64_t n_pages = 1;
 
   struct buddy_allocator_s ba =
@@ -19,7 +19,8 @@ static void test1() {
   uint64_t v0 = buddy_allocate(&ba, 0);
   printf("result: %zu\n", v0);
 
-  printf("allocate (should fail, allocation greater than could be supported)\n");
+  printf(
+      "allocate (should fail, allocation greater than could be supported)\n");
   uint64_t v1 = buddy_allocate(&ba, 2);
   printf("result: %zu\n", v1);
 
@@ -65,7 +66,7 @@ static void test1() {
 
 // test if 2 pages works
 static void test2() {
-    printf("TEST 2\n");
+  printf("TEST 2\n");
   uint64_t n_pages = 2;
 
   struct buddy_allocator_s ba =
@@ -78,7 +79,8 @@ static void test2() {
   uint64_t v0 = buddy_allocate(&ba, 0);
   printf("result: %zu\n", v0);
 
-  printf("allocate (should fail, allocation greater than could be supported)\n");
+  printf(
+      "allocate (should fail, allocation greater than could be supported)\n");
   uint64_t v1 = buddy_allocate(&ba, 3);
   printf("result: %zu\n", v1);
 
@@ -115,7 +117,6 @@ static void test2() {
   uint64_t v5 = buddy_allocate(&ba, 1);
   printf("result: %zu\n", v5);
 
-
   printf("verify\n");
   buddy_verify(&ba);
 
@@ -124,7 +125,6 @@ static void test2() {
 
   printf("verify\n");
   buddy_verify(&ba);
-
 
   printf("free (should succeed)\n");
   buddy_free(&ba, v5);
@@ -139,13 +139,12 @@ static void test2() {
   printf("verify\n");
   buddy_verify(&ba);
 
-
   free(ba.heap);
 }
 
 // test if 4 pages works
 static void test4() {
-    printf("TEST 4\n");
+  printf("TEST 4\n");
   uint64_t n_pages = 4;
 
   struct buddy_allocator_s ba =
@@ -154,7 +153,8 @@ static void test4() {
   printf("verify\n");
   buddy_verify(&ba);
 
-  printf("allocate (should fail, allocation greater than could be supported)\n");
+  printf(
+      "allocate (should fail, allocation greater than could be supported)\n");
   uint64_t v1 = buddy_allocate(&ba, 5);
   printf("result: %zu\n", v1);
 
@@ -219,7 +219,6 @@ static void test4() {
 
   free(ba.heap);
 }
-
 
 int main() {
   test1();
