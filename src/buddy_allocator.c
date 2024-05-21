@@ -23,15 +23,19 @@
 /// MATH FUNCTIONS
 ////////////////////////////////
 
+static inline bool uint64_is_power_of_2(uint64_t x) {
+  return __builtin_popcountll(x) == 1;
+}
+
 static inline uint8_t uint64_log2(uint64_t v) {
   return 8 * (uint8_t)sizeof(uint64_t) - (uint8_t)__builtin_clzll(v) - 1;
 }
 
-static inline uint64_t uint64_pow2(uint8_t i) { return (uint64_t)1 << i; }
-
-static inline bool uint64_is_power_of_2(uint64_t x) {
-  return __builtin_popcountll(x) == 1;
+static inline uint8_t uint64_ceil_log2(uint64_t v) {
+  return uint64_log2(v) + !uint64_is_power_of_2(v);
 }
+
+static inline uint64_t uint64_pow2(uint8_t i) { return (uint64_t)1 << i; }
 
 static inline uint8_t uint8_min(uint8_t a, uint8_t b) {
   if (a < b) {
@@ -194,7 +198,7 @@ static uint64_t
 get_first_page_index_from_block_index(struct buddy_allocator_s *ba,
                                       uint64_t block_index) {
   return (block_index - heap_size(heap_level(block_index) - 1))
-         << (uint64_t)(ba->max_level - heap_level(block_index));
+         << (ba->max_level - heap_level(block_index));
 }
 
 // given the index of a page, gets the allocation it belongs to
@@ -223,22 +227,21 @@ static uint64_t get_block_index_from_page_index(struct buddy_allocator_s *ba,
   return block_index;
 }
 
-static uint8_t get_max_level_from_n_pages(uint64_t n_pages) {
-  if (n_pages == 0) {
-    return 0;
-  }
-  return uint64_log2(n_pages) + !uint64_is_power_of_2(n_pages);
-}
-
+// gets the necessary number of bytes to construct the buddy allocator heap
 uint64_t buddy_get_heap_bytes(uint64_t n_pages) {
-  uint8_t max_level = get_max_level_from_n_pages(n_pages);
+  if (n_pages == 0) {
+    FATAL("n_pages nust not be 0");
+  }
+  uint8_t max_level = uint64_ceil_log2(n_pages);
   return heap_size(max_level);
 }
 
 struct buddy_allocator_s buddy_init(uint64_t n_pages, void *memory_location) {
-  uint8_t max_level = get_max_level_from_n_pages(n_pages);
+  if (n_pages == 0) {
+    FATAL("n_pages nust not be 0");
+  }
 
-  struct buddy_allocator_s allocator = {.max_level = max_level,
+  struct buddy_allocator_s allocator = {.max_level = uint64_ceil_log2(n_pages),
                                         .heap = memory_location};
 
   // init the heap
@@ -329,16 +332,16 @@ uint64_t buddy_allocate(struct buddy_allocator_s *ba, const uint64_t n_pages) {
     return UINT64_MAX;
   }
 
-  const uint8_t level = ba->max_level - uint64_log2(n_pages);
+  const uint8_t allocation_level = ba->max_level - uint64_log2(n_pages);
 
-  if (level < ba->heap[0]) {
+  if (allocation_level < ba->heap[0]) {
     // out of memory
     printf("out of memory\n");
     return UINT64_MAX;
   }
 
   // split blocks to get a slot of the correct size
-  const uint64_t index = acquire_empty_slot(ba, level);
+  const uint64_t index = acquire_empty_slot(ba, allocation_level);
 
   // mark this block as allocated and update parent blocks
   mark_allocated(ba, index);
