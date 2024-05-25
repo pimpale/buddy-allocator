@@ -8,6 +8,9 @@
 #define BA_UNUSABLE 253
 #define BA_MAX_VALID_LEVEL 252
 
+#define BA_STATE_UNREADY 0
+#define BA_STATE_READY 1
+
 // DEFINITIONS:
 // level: the root of a heap has level 0, it's children have level 1, etc
 
@@ -16,6 +19,8 @@
 // We can get level from order by doing n_levels - order
 
 struct buddy_allocator_s {
+  // buddy allocator state
+  uint8_t state; 
   // the maximum level in the heap
   uint8_t max_level;
   // has (n_levels+1)^2 -1 entries forming a binary heap
@@ -33,6 +38,12 @@ struct buddy_allocator_s {
 
 uint64_t buddy_get_heap_bytes(uint64_t n_pages);
 struct buddy_allocator_s buddy_init(uint64_t n_pages, void *memory_location);
+
+// marks a page as unusable
+void buddy_mark_unusable(struct buddy_allocator_s *ba, uint64_t page_id);
+
+// marks the buddy allocator as ready to use
+void buddy_ready(struct buddy_allocator_s *ba);
 
 // validate all the invariants of the buddy allocator heap. used for debugging
 void buddy_verify(struct buddy_allocator_s *ba);

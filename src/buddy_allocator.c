@@ -4,20 +4,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 
-#define FATAL(x)                                                               \
-  do {                                                                         \
-    fprintf(stderr, x);                                                        \
-    exit(EXIT_FAILURE);                                                        \
-  } while (0)
-
-#define FATAL_ARGS(fmt, ...)                                                   \
-  do {                                                                         \
-    fprintf(stderr, fmt, __VA_ARGS__);                                         \
-    exit(EXIT_FAILURE);                                                        \
-  } while (0)
+#include "debug.h"
 
 ////////////////////////////////
 /// MATH FUNCTIONS
@@ -142,16 +130,15 @@ static void mark_free(struct buddy_allocator_s *ba, uint64_t block_index) {
 // Must ensure that space exists first, or will fail
 static uint64_t acquire_empty_slot(struct buddy_allocator_s *ba,
                                    const uint8_t allocation_level) {
-  if (allocation_level > ba->max_level) {
-    FATAL("must have allocation level less than or equal to the max");
-  }
+
+  assert(allocation_level <= ba->max_level,
+         "must have allocation level less than or equal to the max");
 
   uint64_t index = 0;
   uint8_t level = 0;
   while (true) {
-    if (allocation_level < ba->heap[index]) {
-      FATAL("must ensure that space exists before calling this function");
-    }
+    assert(allocation_level >= ba->heap[index],
+           "must ensure that space exists before calling this function");
 
     // this entire block is free
     if (ba->heap[index] == level) {
@@ -229,17 +216,14 @@ static uint64_t get_block_index_from_page_index(struct buddy_allocator_s *ba,
 
 // gets the necessary number of bytes to construct the buddy allocator heap
 uint64_t buddy_get_heap_bytes(uint64_t n_pages) {
-  if (n_pages == 0) {
-    FATAL("n_pages nust not be 0");
-  }
+  assert(n_pages != 0, "n_pages must not be 0");
+
   uint8_t max_level = uint64_ceil_log2(n_pages);
   return heap_size(max_level);
 }
 
 struct buddy_allocator_s buddy_init(uint64_t n_pages, void *memory_location) {
-  if (n_pages == 0) {
-    FATAL("n_pages nust not be 0");
-  }
+  assert(n_pages != 0, "n_pages must not be 0");
 
   struct buddy_allocator_s allocator = {.max_level = uint64_ceil_log2(n_pages),
                                         .heap = memory_location};
@@ -262,7 +246,8 @@ static void buddy_verify_recursive(struct buddy_allocator_s *ba, uint64_t i) {
     } else if (ba->heap[i] == ba->max_level) {
       // free
     } else {
-      FATAL("invalid on bottom level block");
+      fatal_s_u64_s("block ", i,
+                    " has an invalid value for a bottom level block\n");
     }
   } else {
     const uint64_t left = heap_left(i);
@@ -279,9 +264,9 @@ static void buddy_verify_recursive(struct buddy_allocator_s *ba, uint64_t i) {
           ba->heap[right] > BA_MAX_VALID_LEVEL) {
         // ok
       } else {
-        FATAL_ARGS("block %zu claims to be filled, but at least one child has "
-                   "free space\n",
-                   i);
+        fatal_s_u64_s(
+            "block ", i,
+            "claims to be filled, but at least one child has free space\n");
       }
 
       // verify children
@@ -289,9 +274,9 @@ static void buddy_verify_recursive(struct buddy_allocator_s *ba, uint64_t i) {
       buddy_verify_recursive(ba, right);
     } else if (ba->heap[i] < level) {
       // wrong!
-      FATAL_ARGS("block %zu has a smaller level than should be possible at "
-                 "it's level\n",
-                 i);
+      fatal_s_u64_s("block ", i,
+                    " has a smaller level than should be possible at "
+                    "it's level\n");
     } else if (ba->heap[i] == level) {
       // fully free block
     } else if (ba->heap[i] > level && ba->heap[i] <= ba->max_level) {
@@ -299,24 +284,22 @@ static void buddy_verify_recursive(struct buddy_allocator_s *ba, uint64_t i) {
       if (ba->heap[i] == uint8_min(ba->heap[left], ba->heap[right])) {
         // ok
       } else {
-        FATAL_ARGS(
-            "block %zu does not satisfy invariant that its smallest free "
-            "level is the min of its children\n",
-            i);
+        fatal_s_u64_s("block ", i,
+                      " does not satisfy invariant that its smallest free "
+                      "level is the min of its children\n");
       }
 
       // if both of it's children are split and free, then that's an error
       if (ba->heap[left] == level + 1 && ba->heap[right] == level + 1) {
-        FATAL_ARGS("block %zu: two children should be merged\n", i);
+        fatal_s_u64_s("block ", i, " two children should be merged\n");
       }
 
       // verify children
       buddy_verify_recursive(ba, left);
       buddy_verify_recursive(ba, right);
     } else {
-      FATAL_ARGS(
-          "block %zu: has a greater level than is permissible in this tree\n",
-          i);
+      fatal_s_u64_s("block ", i,
+                    " has a greater level than is permissible in this tree\n");
     }
   }
 }
@@ -325,18 +308,26 @@ void buddy_verify(struct buddy_allocator_s *ba) {
   buddy_verify_recursive(ba, 0);
 }
 
+void buddy_mark_unusable(struct buddy_allocator_s *ba, uint64_t page_id) {
+  assert(ba->state == BA_STATE_READY,
+         "allocator state is ready (should be unready)\n");
+
+  uint64_t block_index = get_block_index_from_page_index(ba, page_id);
+  ba->heap[block_index] = BA_UNUSABLE;
+  // update parent blocks
+  propagate(ba, block_index);
+}
+
 uint64_t buddy_allocate(struct buddy_allocator_s *ba, const uint64_t n_pages) {
+  assert(ba->state == BA_STATE_READY, "allocator state is not ready\n");
+
   if (n_pages == 0 || n_pages > uint64_pow2(ba->max_level)) {
-    // can't support request
-    printf("can't support request\n");
     return UINT64_MAX;
   }
 
   const uint8_t allocation_level = ba->max_level - uint64_log2(n_pages);
 
   if (allocation_level < ba->heap[0]) {
-    // out of memory
-    printf("out of memory\n");
     return UINT64_MAX;
   }
 
@@ -350,11 +341,11 @@ uint64_t buddy_allocate(struct buddy_allocator_s *ba, const uint64_t n_pages) {
 }
 
 void buddy_free(struct buddy_allocator_s *ba, uint64_t page_id) {
+  assert(ba->state == BA_STATE_READY, "allocator state is not ready\n");
+
   uint64_t block_index = get_block_index_from_page_index(ba, page_id);
   if (block_index == UINT64_MAX) {
-    printf("this is not a valid allocation\n");
     return;
   }
-
   mark_free(ba, block_index);
 }
