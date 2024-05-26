@@ -8,6 +8,39 @@
 
 #include "debug.h"
 
+#define BA_FILLED 255
+#define BA_ALLOCATED 254
+#define BA_UNUSABLE 253
+#define BA_MAX_VALID_LEVEL 252
+
+#define BA_STATE_UNREADY 0
+#define BA_STATE_READY 1
+
+// DEFINITIONS:
+// level: the root of a heap has level 0, it's children have level 1, etc
+
+// order: order 0 is the smallest unit of memory that the buddy allocator can
+// allocate, order 1 is 2x that size, order 2 4x, and so on.
+// We can get level from order by doing n_levels - order
+
+struct buddy_allocator_s {
+  // buddy allocator state
+  uint8_t state;
+  // the maximum level in the heap
+  uint8_t max_level;
+  // has (n_levels+1)^2 -1 entries forming a binary heap
+  // Key properties:
+  // for the n'th node, it's parent may be found at (n-1)/2
+  // for the n'th node, it's left child may be found at 2*n + 1
+  // for the n'th node, it's right child may be found at 2*n + 2
+  // each entry has the following properties:
+  // the smallest level of any of the children of this block which are empty
+  // if BA_ALLOCATED, this is allocated to some process
+  // if BA_UNUSABLE, this block should never be used or assigned
+  // if BA_FILLED, both children are greater than ba_max_valid_level
+  uint8_t heap[];
+};
+
 ////////////////////////////////
 /// MATH FUNCTIONS
 ////////////////////////////////
@@ -216,34 +249,31 @@ static uint64_t get_block_index_from_page_index(struct buddy_allocator_s *ba,
 }
 
 // gets the necessary number of bytes to construct the buddy allocator heap
-uint64_t buddy_get_heap_bytes(uint64_t n_pages) {
+uint64_t buddy_get_bytes(uint64_t n_pages) {
   assert(n_pages != 0, "n_pages must not be 0");
 
   uint8_t max_level = uint64_ceil_log2(n_pages);
-  return heap_size(max_level);
+  return sizeof(struct buddy_allocator_s) + heap_size(max_level);
 }
 
-struct buddy_allocator_s buddy_init(uint64_t n_pages, void *memory_location) {
+void buddy_init(struct buddy_allocator_s *ba, uint64_t n_pages) {
   assert(n_pages != 0, "n_pages must not be 0");
 
-  struct buddy_allocator_s ba = {.state = BA_STATE_UNREADY,
-                                 .max_level = uint64_ceil_log2(n_pages),
-                                 .heap = memory_location};
+  ba->state = BA_STATE_UNREADY;
+  ba->max_level = uint64_ceil_log2(n_pages);
 
   uint64_t offset = 0;
-  if (ba.max_level > 0) {
-    offset = heap_size(ba.max_level - 1);
+  if (ba->max_level > 0) {
+    offset = heap_size(ba->max_level - 1);
   }
 
   // init the bottom level of the heap
   for (uint64_t i = offset; i < offset + n_pages; i++) {
-    ba.heap[i] = ba.max_level;
+    ba->heap[i] = ba->max_level;
   }
-  for (uint64_t i = n_pages + offset; i < heap_size(ba.max_level); i++) {
-    ba.heap[i] = BA_UNUSABLE;
+  for (uint64_t i = n_pages + offset; i < heap_size(ba->max_level); i++) {
+    ba->heap[i] = BA_UNUSABLE;
   }
-
-  return ba;
 }
 
 void buddy_mark_unusable(struct buddy_allocator_s *ba, uint64_t min_page_id,
@@ -401,5 +431,5 @@ void buddy_free(struct buddy_allocator_s *ba, uint64_t page_id) {
   // coalesce blocks starting from that point
   const uint64_t coalesced_block_index = coalesce(ba, block_index);
   // then update free space on the parent blocks
-  propagate(ba, coalesced_block_index );
+  propagate(ba, coalesced_block_index);
 }
