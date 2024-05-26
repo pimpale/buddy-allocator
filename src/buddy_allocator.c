@@ -89,27 +89,19 @@ static void propagate(struct buddy_allocator_s *ba, uint64_t block_index) {
     uint8_t updated_parent_level = parent_free_level(
         ba, ba->heap[block_index], ba->heap[heap_sibling(block_index)]);
 
-    if (ba->heap[parent] == updated_parent_level) {
-      break;
-    } else {
-      // set the parent's level
-      ba->heap[parent] = updated_parent_level;
-      // start processing the upper one
-      block_index = parent;
-    }
+    // set the parent's level
+    ba->heap[parent] = updated_parent_level;
+    // start processing the upper one
+    block_index = parent;
   }
 }
 
-// marks this block and any parent blocks as busy
-static void mark_allocated(struct buddy_allocator_s *ba, uint64_t block_index) {
-  ba->heap[block_index] = BA_ALLOCATED;
-  // update parent blocks
-  propagate(ba, block_index);
-}
-
-// marks this block as free and coalesce blocks
-static void mark_free(struct buddy_allocator_s *ba, uint64_t block_index) {
-  ba->heap[block_index] = heap_level(block_index);
+// merges together free blocks starting at block index.
+// returns the bock at which coalescing is not possible anymore
+static uint64_t coalesce(struct buddy_allocator_s *ba, uint64_t block_index) {
+  if (ba->heap[block_index] != heap_level(block_index)) {
+    return block_index;
+  }
 
   // try to merge blocks as much as we can
   while (block_index != 0) {
@@ -123,8 +115,7 @@ static void mark_free(struct buddy_allocator_s *ba, uint64_t block_index) {
       break;
     }
   }
-  // then update the on parent blocks
-  propagate(ba, block_index);
+  return block_index;
 }
 
 // splits blocks to find an empty slot.
@@ -291,6 +282,8 @@ void buddy_ready(struct buddy_allocator_s *ba) {
 }
 
 static void buddy_verify_recursive(struct buddy_allocator_s *ba, uint64_t i) {
+  assert(ba->state == BA_STATE_READY, "must be ready to be verified");
+
   uint8_t level = heap_level(i);
   if (level == ba->max_level) {
     // the only valid values at this level are ba->max_level, BA_UNUSABLE, or
@@ -340,6 +333,7 @@ static void buddy_verify_recursive(struct buddy_allocator_s *ba, uint64_t i) {
       if (ba->heap[i] == uint8_min(ba->heap[left], ba->heap[right])) {
         // ok
       } else {
+
         fatal_s_u64_s("block ", i,
                       " does not satisfy invariant that its smallest free "
                       "level is the min of its children\n");
@@ -361,6 +355,12 @@ static void buddy_verify_recursive(struct buddy_allocator_s *ba, uint64_t i) {
 }
 
 void buddy_verify(struct buddy_allocator_s *ba) {
+
+  for (uint64_t z = 0; z < heap_size(ba->max_level); z++) {
+    printf("%u ", ba->heap[z]);
+  }
+  printf("\n");
+
   buddy_verify_recursive(ba, 0);
 }
 
@@ -371,27 +371,35 @@ uint64_t buddy_allocate(struct buddy_allocator_s *ba, const uint64_t n_pages) {
     return UINT64_MAX;
   }
 
-  const uint8_t allocation_level = ba->max_level - uint64_log2(n_pages);
+  const uint8_t allocation_level = ba->max_level - uint64_ceil_log2(n_pages);
 
   if (allocation_level < ba->heap[0]) {
     return UINT64_MAX;
   }
 
   // split blocks to get a slot of the correct size
-  const uint64_t index = acquire_empty_slot(ba, allocation_level);
+  const uint64_t block_index = acquire_empty_slot(ba, allocation_level);
 
   // mark this block as allocated and update parent blocks
-  mark_allocated(ba, index);
+  ba->heap[block_index] = BA_ALLOCATED;
+  // update parent blocks
+  propagate(ba, block_index);
 
-  return get_first_page_index_from_block_index(ba, index);
+  return get_first_page_index_from_block_index(ba, block_index);
 }
 
 void buddy_free(struct buddy_allocator_s *ba, uint64_t page_id) {
   assert(ba->state == BA_STATE_READY, "allocator state is not ready\n");
 
-  uint64_t block_index = get_block_index_from_page_index(ba, page_id);
+  const uint64_t block_index = get_block_index_from_page_index(ba, page_id);
   if (block_index == UINT64_MAX) {
     return;
   }
-  mark_free(ba, block_index);
+
+  // mark block as free
+  ba->heap[block_index] = heap_level(block_index);
+  // coalesce blocks starting from that point
+  const uint64_t coalesced_block_index = coalesce(ba, block_index);
+  // then update free space on the parent blocks
+  propagate(ba, coalesced_block_index );
 }
