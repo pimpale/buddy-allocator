@@ -39,8 +39,8 @@ struct buddy_allocator_s {
 uint64_t buddy_get_heap_bytes(uint64_t n_pages);
 struct buddy_allocator_s buddy_init(uint64_t n_pages, void *memory_location);
 
-// marks a page as unusable
-void buddy_mark_unusable(struct buddy_allocator_s *ba, uint64_t page_id);
+// marks a range of pages as unusable
+void buddy_mark_unusable(struct buddy_allocator_s *ba, uint64_t min_page_id, uint64_t max_page_id);
 
 // marks the buddy allocator as ready to use
 void buddy_ready(struct buddy_allocator_s *ba);

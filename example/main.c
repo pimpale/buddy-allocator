@@ -11,6 +11,7 @@ static void test1() {
 
   struct buddy_allocator_s ba =
       buddy_init(n_pages, malloc(buddy_get_heap_bytes(n_pages)));
+  buddy_ready(&ba);
 
   printf("verify\n");
   buddy_verify(&ba);
@@ -71,6 +72,7 @@ static void test2() {
 
   struct buddy_allocator_s ba =
       buddy_init(n_pages, malloc(buddy_get_heap_bytes(n_pages)));
+  buddy_ready(&ba);
 
   printf("verify\n");
   buddy_verify(&ba);
@@ -149,6 +151,7 @@ static void test4() {
 
   struct buddy_allocator_s ba =
       buddy_init(n_pages, malloc(buddy_get_heap_bytes(n_pages)));
+  buddy_ready(&ba);
 
   printf("verify\n");
   buddy_verify(&ba);
